@@ -1,0 +1,379 @@
+import javax.swing.*;
+import java.awt.*;
+import java.awt.event.*;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+class Monster {
+    public int y;
+    Rectangle hitbox;
+    int direction;
+    int speed;
+    int animFrame = 0; // кадр анимации
+
+    public Monster(int x, int y, int width, int height, int speed) {
+        this.hitbox = new Rectangle(x, y, width, height);
+        this.direction = 1;
+        this.speed = speed;
+    }
+
+    public void move() {
+        hitbox.x += direction * speed;
+        animFrame++; // обновляем анимацию при движении
+        if (hitbox.x <= 0 || hitbox.x >= PlatformerGame.WIDTH - hitbox.width) {
+            direction *= -1;
+        }
+    }
+}
+
+public class PlatformerGame extends JFrame {
+    public static final int WIDTH = 800;
+    public static final int HEIGHT = 600;
+    public static final int PLAYER_SIZE = 30;
+    public static final int PLATFORM_HEIGHT = 20;
+    public static final int GRAVITY = 1;
+    public static final int JUMP_FORCE = -15;
+    public static final int MOVEMENT_SPEED = 5;
+    public static final int LEVEL_TIME_SECONDS = 45;
+    public static final int COINS_TO_COLLECT_FOR_LEVEL = 5;
+
+    private int playerX, playerY, playerVelocityY = 0;
+    private int prevPlayerY = 0;
+    private boolean movingLeft = false, movingRight = false;
+    private int playerAnimFrame = 0, jumpAnimFrame = 0; // анимация игрока
+    private int score = 0;
+    private int collectedCoinsThisLevel = 0;
+    private int currentLevel = 1;
+    private List<Rectangle> platforms;
+    private List<Rectangle> coins;
+    private List<Monster> monsters;
+    private Rectangle spikeTrap;
+    private long levelStartTime, levelEndTime;
+    private boolean levelPassed = false;
+    private Timer gameTimer;
+    private int somePlatformTop;
+
+    public PlatformerGame() {
+        setTitle("Платформер");
+        setSize(WIDTH, HEIGHT);
+        setDefaultCloseOperation(EXIT_ON_CLOSE);
+        setLocationRelativeTo(null);
+        setFocusable(true);
+
+        addKeyListener(new KeyAdapter() {
+            public void keyPressed(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_W && isOnGround()) {
+                    playerVelocityY = JUMP_FORCE;
+                    jumpAnimFrame = 0;
+                }
+                if (e.getKeyCode() == KeyEvent.VK_A) movingLeft = true;
+                if (e.getKeyCode() == KeyEvent.VK_D) movingRight = true;
+            }
+            public void keyReleased(KeyEvent e) {
+                if (e.getKeyCode() == KeyEvent.VK_A) movingLeft = false;
+                if (e.getKeyCode() == KeyEvent.VK_D) movingRight = false;
+            }
+        });
+
+        loadLevel(currentLevel);
+        startGameTimer();
+    }
+
+    private boolean isOnGround() {
+        return playerY >= HEIGHT - PLAYER_SIZE - PLATFORM_HEIGHT ||
+                (prevPlayerY <= somePlatformTop && playerY + PLAYER_SIZE >= somePlatformTop);
+    }
+
+    private void startGameTimer() {
+        gameTimer = new Timer(16, e -> {
+            updateGame();
+            repaint();
+        });
+        gameTimer.start();
+    }
+
+    // ... остальные методы loadLevel, createLevel1, createLevel2 остаются БЕЗ ИЗМЕНЕНИЙ ...
+
+    private void updateGame() {
+        if (levelPassed) return;
+        prevPlayerY = playerY;
+
+        // Движение и анимация игрока
+        boolean isMoving = movingLeft || movingRight;
+        if (isMoving) {
+            playerAnimFrame++;
+            if (movingLeft) playerX -= MOVEMENT_SPEED;
+            if (movingRight) playerX += MOVEMENT_SPEED;
+        } else playerAnimFrame = 0;
+
+        if (playerVelocityY < 0) jumpAnimFrame++; // анимация прыжка
+
+        playerVelocityY += GRAVITY;
+        playerY += playerVelocityY;
+
+        Rectangle playerRect = new Rectangle(playerX, playerY, PLAYER_SIZE, PLAYER_SIZE);
+
+        // Коллизии платформ (код без изменений)
+        boolean onPlatform = false;
+        for (Rectangle platform : platforms) {
+            boolean horizontallyOverlaps = playerX + PLAYER_SIZE > platform.x && playerX < platform.x + platform.width;
+            if (!horizontallyOverlaps) continue;
+
+            int playerBottom = playerY + PLAYER_SIZE;
+            int prevBottom = prevPlayerY + PLAYER_SIZE;
+
+            if (prevBottom <= platform.y && playerBottom >= platform.y && playerVelocityY >= 0) {
+                playerY = platform.y - PLAYER_SIZE;
+                playerVelocityY = 0;
+                onPlatform = true;
+            } else if (prevPlayerY >= platform.y + platform.height && playerVelocityY < 0) {
+                playerY = platform.y + platform.height;
+                playerVelocityY = 0;
+            }
+        }
+
+        if (!onPlatform && playerY >= HEIGHT - PLAYER_SIZE - PLATFORM_HEIGHT) {
+            playerY = HEIGHT - PLAYER_SIZE - PLATFORM_HEIGHT;
+            playerVelocityY = 0;
+        }
+
+        if (playerX < 0) playerX = 0;
+        if (playerX > WIDTH - PLAYER_SIZE) playerX = WIDTH - PLAYER_SIZE;
+
+        playerRect.setBounds(playerX, playerY, PLAYER_SIZE, PLAYER_SIZE);
+
+        // Монеты, спайки, монстры (без изменений)
+        coins.removeIf(coin -> {
+            if (playerRect.intersects(coin)) {
+                score += 10;
+                collectedCoinsThisLevel++;
+                return true;
+            }
+            return false;
+        });
+
+        if (spikeTrap != null && playerRect.intersects(spikeTrap)) {
+            JOptionPane.showMessageDialog(this, "Вы столкнулись с преградой! Уровень перезапущен.");
+            loadLevel(currentLevel);
+            return;
+        }
+
+        for (Monster monster : monsters) {
+            monster.move();
+            if (playerRect.intersects(monster.hitbox)) {
+                JOptionPane.showMessageDialog(this, "Вы столкнулись с монстром! Уровень перезапущен.");
+                loadLevel(currentLevel);
+                return;
+            }
+        }
+
+        if (collectedCoinsThisLevel >= COINS_TO_COLLECT_FOR_LEVEL) {
+            levelPassed = true;
+            SwingUtilities.invokeLater(() -> {
+                JOptionPane.showMessageDialog(this,
+                        String.format("Уровень %d пройден! Собрано %d монет.", currentLevel, collectedCoinsThisLevel));
+                currentLevel++;
+                loadLevel(currentLevel);
+            });
+        }
+
+        long timeLeft = (levelEndTime - System.currentTimeMillis()) / 1000;
+        if (timeLeft <= 0 && !levelPassed) {
+            JOptionPane.showMessageDialog(this, "Время вышло! Уровень перезапущен.");
+            loadLevel(currentLevel);
+        }
+    }
+
+    @Override
+    public void paint(Graphics g) {
+        super.paint(g);
+        Graphics2D g2d = (Graphics2D) g;
+        g2d.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+
+        // Фон
+        g2d.setColor(new Color(20, 30, 60));
+        g2d.fillRect(0, 0, WIDTH, HEIGHT);
+
+        // Платформы
+        g2d.setColor(Color.GREEN.darker());
+        platforms.forEach(p -> g2d.fillRect(p.x, p.y, p.width, p.height));
+
+        // Монеты
+        g2d.setColor(Color.YELLOW);
+        coins.forEach(coin -> {
+            g2d.fillOval(coin.x, coin.y, coin.width, coin.height);
+            g2d.setColor(Color.ORANGE);
+            g2d.fillOval(coin.x + 5, coin.y + 5, 10, 10);
+            g2d.setColor(Color.YELLOW);
+        });
+
+        // Спайки
+        if (spikeTrap != null) {
+            g2d.setColor(Color.RED);
+            int[] spikeX = {spikeTrap.x, spikeTrap.x + 20, spikeTrap.x + 40};
+            int[] spikeY = {spikeTrap.y + 20, spikeTrap.y, spikeTrap.y + 20};
+            g2d.fillPolygon(spikeX, spikeY, 3);
+        }
+
+        // ИГРОК - человечек с анимацией бега и прыжка
+        drawPlayer(g2d);
+
+        // МОНСТРЫ - страшные существа с анимацией бега
+        drawMonsters(g2d);
+
+        // UI
+        g2d.setColor(Color.WHITE);
+        g2d.setFont(new Font("Arial", Font.BOLD, 16));
+        g2d.drawString("Счет: " + score, 10, 25);
+        g2d.drawString("Монет: " + collectedCoinsThisLevel + "/5", 10, 50);
+        long timeLeft = (levelEndTime - System.currentTimeMillis()) / 1000;
+        g2d.drawString("Время: " + Math.max(0, timeLeft), WIDTH - 100, 25);
+        g2d.drawString("Уровень: " + currentLevel, WIDTH - 100, 50);
+    }
+
+    private void drawPlayer(Graphics2D g2d) {
+        int frame = (playerAnimFrame / 5) % 4; // 4 кадра бега
+        boolean jumping = playerVelocityY != 0 || jumpAnimFrame < 20;
+        boolean facingRight = !movingLeft || (movingRight && movingLeft);
+
+        g2d.setColor(jumping ? Color.BLUE : Color.CYAN);
+
+        // Тело
+        g2d.fillRect(playerX + 8, playerY + 10, 14, 15);
+
+        // Голова
+        g2d.setColor(Color.WHITE);
+        g2d.fillOval(playerX + 8, playerY + 2, 14, 12);
+        g2d.setColor(Color.BLACK);
+        g2d.fillOval(playerX + 11, playerY + 6, 3, 3);
+        g2d.fillOval(playerX + 16, playerY + 6, 3, 3);
+
+        // Ноги - анимация бега
+        g2d.setColor(Color.ORANGE);
+        if (jumping) {
+            // Прыжок - ноги вместе
+            g2d.fillRect(playerX + 8, playerY + 25, 5, 5);
+            g2d.fillRect(playerX + 17, playerY + 25, 5, 5);
+        } else {
+            // Бег - ноги чередуются
+            if (frame == 0 || frame == 2) {
+                g2d.fillRect(playerX + 5, playerY + 25, 8, 5);
+                g2d.fillRect(playerX + 17, playerY + 25, 5, 5);
+            } else {
+                g2d.fillRect(playerX + 8, playerY + 25, 5, 5);
+                g2d.fillRect(playerX + 17, playerY + 25, 8, 5);
+            }
+        }
+
+        // Руки - анимация
+        g2d.setColor(Color.PINK);
+        if (frame == 0 || frame == 2) {
+            g2d.fillRect(playerX + 3, playerY + 15, 6, 4);
+            g2d.fillRect(playerX + 21, playerY + 15, 6, 4);
+        } else {
+            g2d.fillRect(playerX + 3, playerY + 15, 6, 4);
+            g2d.fillRect(playerX + 21, playerY + 20, 6, 4);
+        }
+    }
+
+    private void drawMonsters(Graphics2D g2d) {
+        for (Monster monster : monsters) {
+            int frame = (monster.animFrame / 3) % 3; // 3 кадра бега
+            boolean facingRight = monster.direction > 0;
+
+            // Страшное существо: паук-монстр
+            g2d.setColor(Color.DARK_GRAY);
+            g2d.fillOval(monster.hitbox.x + 2, monster.hitbox.y + 5, 26, 20); // тело
+
+            // Красные глаза
+            g2d.setColor(Color.RED);
+            g2d.fillOval(monster.hitbox.x + 8 + (facingRight ? 0 : 8), monster.hitbox.y + 8, 6, 6);
+            g2d.fillOval(monster.hitbox.x + 16 + (facingRight ? 0 : -8), monster.y + 8, 6, 6);
+
+            // Клыки
+            g2d.setColor(Color.WHITE);
+            int[] fangX = facingRight ?
+                    new int[]{monster.hitbox.x + 25, monster.hitbox.x + 28, monster.hitbox.x + 22} :
+                    new int[]{monster.hitbox.x + 5, monster.hitbox.x + 2, monster.hitbox.x + 8};
+            int[] fangY = {monster.hitbox.y + 18, monster.hitbox.y + 22, monster.hitbox.y + 22};
+            g2d.fillPolygon(fangX, fangY, 3);
+
+            // Ноги - анимация бега (8 паучьих ног)
+            g2d.setColor(Color.GRAY);
+            for (int i = 0; i < 4; i++) {
+                int legOffset = (frame == 1 ? 3 : -3) * ((i % 2 == 0) ? 1 : -1);
+                int legX = facingRight ?
+                        monster.hitbox.x + i * 6 : monster.hitbox.x + 24 - i * 6;
+                g2d.drawLine(legX, monster.hitbox.y + 22, legX + legOffset, monster.hitbox.y + 28);
+            }
+        }
+    }
+
+    private void loadLevel(int level) {
+        platforms = new ArrayList<>();
+        coins = new ArrayList<>();
+        monsters = new ArrayList<>();
+        playerX = 50;
+        playerY = HEIGHT - PLAYER_SIZE - PLATFORM_HEIGHT;
+        prevPlayerY = playerY;
+        playerVelocityY = 0;
+        movingLeft = movingRight = false;
+        playerAnimFrame = jumpAnimFrame = 0;
+        collectedCoinsThisLevel = 0;
+        levelPassed = false;
+        levelStartTime = System.currentTimeMillis();
+        levelEndTime = levelStartTime + (LEVEL_TIME_SECONDS * 1000);
+
+        if (level == 1) createLevel1();
+        else if (level == 2) createLevel2();
+        else {
+            gameTimer.stop();
+            JOptionPane.showMessageDialog(this, "Вы прошли игру! Итоговый счет: " + score);
+            System.exit(0);
+        }
+    }
+
+    // createLevel1 и createLevel2 остаются БЕЗ ИЗМЕНЕНИЙ (скопируйте из оригинала)
+    private void createLevel1() {
+        platforms.add(new Rectangle(0, HEIGHT - PLATFORM_HEIGHT, WIDTH, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(120, HEIGHT - 120, 140, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(320, HEIGHT - 160, 120, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(480, HEIGHT - 200, 110, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(620, HEIGHT - 240, 100, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(200, HEIGHT - 280, 100, PLATFORM_HEIGHT));
+
+        coins.add(new Rectangle(140, HEIGHT - 140, 20, 20));
+        coins.add(new Rectangle(350, HEIGHT - 180, 20, 20));
+        coins.add(new Rectangle(500, HEIGHT - 220, 20, 20));
+        coins.add(new Rectangle(640, HEIGHT - 260, 20, 20));
+        coins.add(new Rectangle(220, HEIGHT - 300, 20, 20));
+
+        spikeTrap = new Rectangle(700, HEIGHT - PLATFORM_HEIGHT - 20, 40, 20);
+        monsters.add(new Monster(300, HEIGHT - PLAYER_SIZE - PLATFORM_HEIGHT, 30, 30, 2));
+    }
+
+    private void createLevel2() {
+        platforms.add(new Rectangle(0, HEIGHT - PLATFORM_HEIGHT, WIDTH, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(60, HEIGHT - 110, 130, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(220, HEIGHT - 150, 120, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(380, HEIGHT - 190, 130, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(540, HEIGHT - 230, 110, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(680, HEIGHT - 270, 90, PLATFORM_HEIGHT));
+        platforms.add(new Rectangle(320, HEIGHT - 270, 100, PLATFORM_HEIGHT));
+
+        coins.add(new Rectangle(80, HEIGHT - 130, 20, 20));
+        coins.add(new Rectangle(240, HEIGHT - 170, 20, 20));
+        coins.add(new Rectangle(400, HEIGHT - 210, 20, 20));
+        coins.add(new Rectangle(560, HEIGHT - 250, 20, 20));
+        coins.add(new Rectangle(340, HEIGHT - 290, 20, 20));
+
+        spikeTrap = new Rectangle(50, HEIGHT - PLATFORM_HEIGHT - 20, 40, 20);
+        monsters.add(new Monster(500, HEIGHT - PLAYER_SIZE - PLATFORM_HEIGHT, 30, 30, 2));
+        monsters.add(new Monster(380, HEIGHT - 190 - 30, 30, 30, 1));
+    }
+
+    public static void main(String[] args) {
+        SwingUtilities.invokeLater(() -> new PlatformerGame().setVisible(true));
+    }
+}
